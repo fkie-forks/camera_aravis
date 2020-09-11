@@ -39,7 +39,7 @@
 
 
 #include <nodelet/loader.h>
-#include "../include/camera_aravis/camera_aravis_nodelet.h"
+#include "camera_aravis/camera_aravis_nodelet.h"
 
 
 int main(int argc, char** argv) 

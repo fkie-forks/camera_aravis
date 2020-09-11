@@ -33,11 +33,11 @@ generate_messages(
 catkin_package(
     DEPENDS Aravis GLIB2
     CATKIN_DEPENDS roscpp nodelet sensor_msgs message_runtime image_transport camera_info_manager dynamic_reconfigure tf tf2_ros
-    INCLUDE_DIRS
+    INCLUDE_DIRS include
     LIBRARIES
 )
 
-include_directories(cfg/cpp ${catkin_INCLUDE_DIRS} ${Aravis_INCLUDE_DIRS} ${GLIB2_INCLUDE_DIRS})
+include_directories(include ${catkin_INCLUDE_DIRS} ${Aravis_INCLUDE_DIRS} ${GLIB2_INCLUDE_DIRS})
 
 set(LIBRARIES
   ${catkin_LIBRARIES}
