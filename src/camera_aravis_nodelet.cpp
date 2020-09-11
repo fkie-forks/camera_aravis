@@ -65,7 +65,8 @@ CameraAravisNodelet::~CameraAravisNodelet() {
 	}
 
 	if (p_device_) {
-		arv_device_execute_command (p_device_, "AcquisitionStop");
+		GError *error = nullptr;
+		arv_device_execute_command (p_device_, "AcquisitionStop", &error);
 	}
 
 	g_object_unref (p_stream_);
@@ -98,22 +99,23 @@ void CameraAravisNodelet::onInit() {
 	}
 
 	// Open the camera, and set it up.
+	GError *error = nullptr;
 	while (!p_camera_)
 	{
 		if (guid.empty()) {
 			ROS_INFO("Opening: (any)");
-			p_camera_ = arv_camera_new(NULL);
+			p_camera_ = arv_camera_new(nullptr, &error);
 		}
 		else {
 			ROS_INFO_STREAM("Opening: " << guid);
-			p_camera_ = arv_camera_new(guid.c_str());
+			p_camera_ = arv_camera_new(guid.c_str(), &error);
 		}
 		ros::Duration(1.0).sleep();
 		ros::spinOnce();
 	}
 
 	p_device_ = arv_camera_get_device(p_camera_);
-	ROS_INFO("Opened: %s-%s", arv_camera_get_vendor_name(p_camera_), arv_device_get_string_feature_value(p_device_, "DeviceSerialNumber"));
+	ROS_INFO("Opened: %s-%s", arv_camera_get_vendor_name(p_camera_, &error), arv_device_get_string_feature_value(p_device_, "DeviceSerialNumber", &error));
 
 	// Start the dynamic_reconfigure server.
 	reconfigure_server_.reset(new dynamic_reconfigure::Server<Config>(reconfigure_mutex_));
@@ -125,16 +127,16 @@ void CameraAravisNodelet::onInit() {
 	discoverFeatures();
 
 	// Get parameter bounds.
-	arv_camera_get_exposure_time_bounds	(p_camera_, &config_min_.ExposureTime, &config_max_.ExposureTime);
-	arv_camera_get_gain_bounds			(p_camera_, &config_min_.Gain, &config_max_.Gain);
-	arv_camera_get_sensor_size			(p_camera_, &sensor_.width, &sensor_.height);
-	arv_camera_get_width_bounds			(p_camera_, &roi_.width_min, &roi_.width_max);
-	arv_camera_get_height_bounds		(p_camera_, &roi_.height_min, &roi_.height_max);
-	arv_camera_get_frame_rate_bounds	(p_camera_,	&config_min_.AcquisitionFrameRate, &config_max_.AcquisitionFrameRate);
+	arv_camera_get_exposure_time_bounds	(p_camera_, &config_min_.ExposureTime, &config_max_.ExposureTime, &error);
+	arv_camera_get_gain_bounds			(p_camera_, &config_min_.Gain, &config_max_.Gain, &error);
+	arv_camera_get_sensor_size			(p_camera_, &sensor_.width, &sensor_.height, &error);
+	arv_camera_get_width_bounds			(p_camera_, &roi_.width_min, &roi_.width_max, &error);
+	arv_camera_get_height_bounds		(p_camera_, &roi_.height_min, &roi_.height_max, &error);
+	arv_camera_get_frame_rate_bounds	(p_camera_,	&config_min_.AcquisitionFrameRate, &config_max_.AcquisitionFrameRate, &error);
 	if (implemented_features_["FocusPos"])
 	{
 		gint64 focus_min64, focus_max64;
-		arv_device_get_integer_feature_bounds (p_device_, "FocusPos", &focus_min64, &focus_max64);
+		arv_device_get_integer_feature_bounds (p_device_, "FocusPos", &focus_min64, &focus_max64, &error);
 		config_min_.FocusPos = focus_min64;
 		config_max_.FocusPos = focus_max64;
 	}
@@ -146,38 +148,38 @@ void CameraAravisNodelet::onInit() {
 
 	// Initial camera settings.
 	if (implemented_features_["ExposureTime"])
-		arv_camera_set_exposure_time(p_camera_, config_.ExposureTime);
+		arv_camera_set_exposure_time(p_camera_, config_.ExposureTime, &error);
 	if (implemented_features_["Gain"])
-		arv_camera_set_gain(p_camera_, config_.Gain);
+		arv_camera_set_gain(p_camera_, config_.Gain, &error);
 	if (implemented_features_["AcquisitionFrameRateEnable"])
-		arv_device_set_integer_feature_value(p_device_, "AcquisitionFrameRateEnable", 1);
+		arv_device_set_integer_feature_value(p_device_, "AcquisitionFrameRateEnable", 1, &error);
 	if (implemented_features_["AcquisitionFrameRate"])
-		arv_camera_set_frame_rate(p_camera_, config_.AcquisitionFrameRate);
+		arv_camera_set_frame_rate(p_camera_, config_.AcquisitionFrameRate, &error);
 
 	// Set up the triggering.
 	if (implemented_features_["TriggerMode"] && implemented_features_["TriggerSelector"])
 	{
-		arv_device_set_string_feature_value(p_device_, "TriggerSelector", "FrameStart");
-		arv_device_set_string_feature_value(p_device_, "TriggerMode", "Off");
+		arv_device_set_string_feature_value(p_device_, "TriggerSelector", "FrameStart", &error);
+		arv_device_set_string_feature_value(p_device_, "TriggerMode", "Off", &error);
 	}
 
 	// possibly set or override from given parameter
 	writeCameraFeaturesFromRosparam();
 
 	// get current state of camera for config_
-	arv_camera_get_region (p_camera_, &roi_.x, &roi_.y, &roi_.width, &roi_.height);
-	config_.AcquisitionMode = implemented_features_["AcquisitionMode"] ? arv_device_get_string_feature_value(p_device_, "AcquisitionMode") : "Continuous";
-	config_.AcquisitionFrameRate = implemented_features_["AcquisitionFrameRate"] ? arv_camera_get_frame_rate(p_camera_) : 0.0;
-	config_.ExposureAuto	= implemented_features_["ExposureAuto"] ? arv_device_get_string_feature_value(p_device_, "ExposureAuto") : "Off";
-	config_.ExposureTime 	= implemented_features_["ExposureTime"] ? arv_camera_get_exposure_time(p_camera_) : 0.0;
-	config_.GainAuto		= implemented_features_["GainAuto"] ? arv_device_get_string_feature_value(p_device_, "GainAuto") : "Off";
-	config_.Gain      		= implemented_features_["Gain"] ? arv_camera_get_gain (p_camera_) : 0.0;
-	sensor_.pixel_format	= std::string(arv_device_get_string_feature_value(p_device_, "PixelFormat"));
-	config_.TriggerMode		= implemented_features_["TriggerMode"] ? arv_device_get_string_feature_value(p_device_, "TriggerMode") : "Off";
-	config_.TriggerSource	= implemented_features_["TriggerSource"] ? arv_device_get_string_feature_value(p_device_, "TriggerSource") : "Software";
+	arv_camera_get_region (p_camera_, &roi_.x, &roi_.y, &roi_.width, &roi_.height, &error);
+	config_.AcquisitionMode = implemented_features_["AcquisitionMode"] ? arv_device_get_string_feature_value(p_device_, "AcquisitionMode", &error) : "Continuous";
+	config_.AcquisitionFrameRate = implemented_features_["AcquisitionFrameRate"] ? arv_camera_get_frame_rate(p_camera_, &error) : 0.0;
+	config_.ExposureAuto	= implemented_features_["ExposureAuto"] ? arv_device_get_string_feature_value(p_device_, "ExposureAuto", &error) : "Off";
+	config_.ExposureTime 	= implemented_features_["ExposureTime"] ? arv_camera_get_exposure_time(p_camera_, &error) : 0.0;
+	config_.GainAuto		= implemented_features_["GainAuto"] ? arv_device_get_string_feature_value(p_device_, "GainAuto", &error) : "Off";
+	config_.Gain      		= implemented_features_["Gain"] ? arv_camera_get_gain (p_camera_, &error) : 0.0;
+	sensor_.pixel_format	= std::string(arv_device_get_string_feature_value(p_device_, "PixelFormat", &error));
+	config_.TriggerMode		= implemented_features_["TriggerMode"] ? arv_device_get_string_feature_value(p_device_, "TriggerMode", &error) : "Off";
+	config_.TriggerSource	= implemented_features_["TriggerSource"] ? arv_device_get_string_feature_value(p_device_, "TriggerSource", &error) : "Software";
 	std::transform(sensor_.pixel_format.begin(), sensor_.pixel_format.end(), sensor_.pixel_format.begin(), [](unsigned char c){ return std::tolower(c); });
-	sensor_.n_bytes_pixel	= ARV_PIXEL_FORMAT_BYTE_PER_PIXEL(arv_device_get_integer_feature_value(p_device_, "PixelFormat"));
-	config_.FocusPos  		= implemented_features_["FocusPos"] ? arv_device_get_integer_feature_value (p_device_, "FocusPos") : 0;
+	sensor_.n_bytes_pixel	= ARV_PIXEL_FORMAT_BYTE_PER_PIXEL(arv_device_get_integer_feature_value(p_device_, "PixelFormat", &error));
+	config_.FocusPos  		= implemented_features_["FocusPos"] ? arv_device_get_integer_feature_value (p_device_, "FocusPos", &error) : 0;
 
 	// Get other (non GenIcam) parameter current values.
 	pnh.param<double>("softwaretriggerrate", config_.softwaretriggerrate, config_.softwaretriggerrate);
@@ -218,7 +220,7 @@ void CameraAravisNodelet::onInit() {
 	}
 
 	// default calibration url is DeviceSerialNumber.yaml
-	std::string calib_url(arv_device_get_string_feature_value (p_device_, "DeviceSerialNumber"));
+	std::string calib_url(arv_device_get_string_feature_value (p_device_, "DeviceSerialNumber", &error));
 	calib_url += ".yaml";
 	// check if there is a different one given on parameters server
 	pnh.param<std::string>("camera_info_url", calib_url, calib_url);
@@ -236,19 +238,19 @@ void CameraAravisNodelet::onInit() {
 	// Print information.
 	ROS_INFO ("    Using Camera Configuration:");
 	ROS_INFO ("    ---------------------------");
-	ROS_INFO ("    Vendor name          = %s", arv_device_get_string_feature_value (p_device_, "DeviceVendorName"));
-	ROS_INFO ("    Model name           = %s", arv_device_get_string_feature_value (p_device_, "DeviceModelName"));
-	ROS_INFO ("    Device id            = %s", arv_device_get_string_feature_value (p_device_, "DeviceUserID"));
-	ROS_INFO ("    Serial number        = %s", arv_device_get_string_feature_value (p_device_, "DeviceSerialNumber"));
+	ROS_INFO ("    Vendor name          = %s", arv_device_get_string_feature_value (p_device_, "DeviceVendorName", &error));
+	ROS_INFO ("    Model name           = %s", arv_device_get_string_feature_value (p_device_, "DeviceModelName", &error));
+	ROS_INFO ("    Device id            = %s", arv_device_get_string_feature_value (p_device_, "DeviceUserID", &error));
+	ROS_INFO ("    Serial number        = %s", arv_device_get_string_feature_value (p_device_, "DeviceSerialNumber", &error));
 	ROS_INFO ("    Type                 = %s", arv_camera_is_uv_device(p_camera_) ? "USB3Vision" : (arv_camera_is_gv_device(p_camera_) ? "GigEVision" : "Other"));
 	ROS_INFO ("    Sensor width         = %d", sensor_.width);
 	ROS_INFO ("    Sensor height        = %d", sensor_.height);
 	ROS_INFO ("    ROI x,y,w,h          = %d, %d, %d, %d", roi_.x, roi_.y, roi_.width, roi_.height);
 	ROS_INFO ("    Pixel format         = %s", sensor_.pixel_format.c_str());
 	ROS_INFO ("    BytesPerPixel        = %lu", sensor_.n_bytes_pixel);
-	ROS_INFO ("    Acquisition Mode     = %s", implemented_features_["AcquisitionMode"] ? arv_device_get_string_feature_value (p_device_, "AcquisitionMode") : "(not implemented in camera)");
-	ROS_INFO ("    Trigger Mode         = %s", implemented_features_["TriggerMode"] ? arv_device_get_string_feature_value (p_device_, "TriggerMode") : "(not implemented in camera)");
-	ROS_INFO ("    Trigger Source       = %s", implemented_features_["TriggerSource"] ? arv_device_get_string_feature_value(p_device_, "TriggerSource") : "(not implemented in camera)");
+	ROS_INFO ("    Acquisition Mode     = %s", implemented_features_["AcquisitionMode"] ? arv_device_get_string_feature_value (p_device_, "AcquisitionMode", &error) : "(not implemented in camera)");
+	ROS_INFO ("    Trigger Mode         = %s", implemented_features_["TriggerMode"] ? arv_device_get_string_feature_value (p_device_, "TriggerMode", &error) : "(not implemented in camera)");
+	ROS_INFO ("    Trigger Source       = %s", implemented_features_["TriggerSource"] ? arv_device_get_string_feature_value(p_device_, "TriggerSource", &error) : "(not implemented in camera)");
 	ROS_INFO ("    Can set FrameRate:     %s", implemented_features_["AcquisitionFrameRate"] ? "True" : "False");
 	if (implemented_features_["AcquisitionFrameRate"])
 	{
@@ -272,18 +274,18 @@ void CameraAravisNodelet::onInit() {
 	ROS_INFO ("    Can set FocusPos:      %s", implemented_features_["FocusPos"] ? "True" : "False");
 
 	if (implemented_features_["GevSCPSPacketSize"])
-		ROS_INFO ("    Network mtu          = %lu", arv_device_get_integer_feature_value(p_device_, "GevSCPSPacketSize"));
+		ROS_INFO ("    Network mtu          = %lu", arv_device_get_integer_feature_value(p_device_, "GevSCPSPacketSize", &error));
 
 	ROS_INFO ("    ---------------------------");
 
 
 	while (true)
 	{
-		p_stream_ = arv_device_create_stream(p_device_, NULL, NULL);
+		p_stream_ = arv_device_create_stream(p_device_, NULL, NULL, &error);
 		if (p_stream_)
 		{
 			// Load up some buffers.
-			const gint n_bytes_payload = arv_camera_get_payload(p_camera_);
+			const gint n_bytes_payload = arv_camera_get_payload(p_camera_, &error);
 			p_buffer_pool_.reset(new CameraBufferPool(p_stream_, n_bytes_payload, 3));
 			if (arv_camera_is_gv_device(p_camera_))
 			{
@@ -314,7 +316,7 @@ void CameraAravisNodelet::onInit() {
 	arv_stream_set_emit_signals(p_stream_, TRUE);
 
 	if (cam_pub_.getNumSubscribers())
-		arv_camera_start_acquisition(p_camera_);
+		arv_camera_start_acquisition(p_camera_, &error);
 
 	ROS_INFO("Done initializing camera_aravis.");
 }
@@ -322,9 +324,10 @@ void CameraAravisNodelet::onInit() {
 void CameraAravisNodelet::cameraAutoInfoCallback(const CameraAutoInfoConstPtr& msg_ptr) {
 	if (config_.AutoSlave && p_device_) {
 
+		GError *error = nullptr;
 		if (auto_params_.exposure_time != msg_ptr->exposure_time && implemented_features_["ExposureTime"])
 		{
-			arv_device_set_float_feature_value (p_device_, "ExposureTime", msg_ptr->exposure_time);
+			arv_device_set_float_feature_value (p_device_, "ExposureTime", msg_ptr->exposure_time, &error);
 		}
 
 		if (implemented_features_["Gain"]) {
@@ -332,28 +335,28 @@ void CameraAravisNodelet::cameraAutoInfoCallback(const CameraAutoInfoConstPtr& m
 			{
 				if (implemented_features_["GainSelector"])
 				{
-					arv_device_set_string_feature_value (p_device_, "GainSelector", "All");
+					arv_device_set_string_feature_value (p_device_, "GainSelector", "All", &error);
 				}
-				arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain);
+				arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain, &error);
 			}
 
 			if (implemented_features_["GainSelector"]) {
 				if (auto_params_.gain_red != msg_ptr->gain_red)
 				{
-					arv_device_set_string_feature_value (p_device_, "GainSelector", "Red");
-					arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain_red);
+					arv_device_set_string_feature_value (p_device_, "GainSelector", "Red", &error);
+					arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain_red, &error);
 				}
 
 				if (auto_params_.gain_green != msg_ptr->gain_green)
 				{
-					arv_device_set_string_feature_value (p_device_, "GainSelector", "Green");
-					arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain_green);
+					arv_device_set_string_feature_value (p_device_, "GainSelector", "Green", &error);
+					arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain_green, &error);
 				}
 
 				if (auto_params_.gain_blue != msg_ptr->gain_blue)
 				{
-					arv_device_set_string_feature_value (p_device_, "GainSelector", "Blue");
-					arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain_blue);
+					arv_device_set_string_feature_value (p_device_, "GainSelector", "Blue", &error);
+					arv_device_set_float_feature_value (p_device_, "Gain", msg_ptr->gain_blue, &error);
 				}
 			}
 		}
@@ -363,55 +366,55 @@ void CameraAravisNodelet::cameraAutoInfoCallback(const CameraAutoInfoConstPtr& m
 			{
 				if (implemented_features_["BlackLevelSelector"])
 				{
-					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "All");
+					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "All", &error);
 				}
-				arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->black_level);
+				arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->black_level, &error);
 			}
 
 			if (implemented_features_["BlackLevelSelector"]) {
 				if (auto_params_.bl_red != msg_ptr->bl_red)
 				{
-					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "Red");
-					arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->bl_red);
+					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "Red", &error);
+					arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->bl_red, &error);
 				}
 
 				if (auto_params_.bl_green != msg_ptr->bl_green)
 				{
-					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "Green");
-					arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->bl_green);
+					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "Green", &error);
+					arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->bl_green, &error);
 				}
 
 				if (auto_params_.bl_blue != msg_ptr->bl_blue)
 				{
-					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "Blue");
-					arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->bl_blue);
+					arv_device_set_string_feature_value (p_device_, "BlackLevelSelector", "Blue", &error);
+					arv_device_set_float_feature_value (p_device_, "BlackLevel", msg_ptr->bl_blue, &error);
 				}
 			}
 		}
 
 		// White balance as TIS is providing
-		if (strcmp("The Imaging Source Europe GmbH", arv_camera_get_vendor_name(p_camera_))==0) {
-			arv_device_set_integer_feature_value(p_device_, "WhiteBalanceRedRegister", (int)(auto_params_.wb_red * 255.));
-			arv_device_set_integer_feature_value(p_device_, "WhiteBalanceGreenRegister", (int)(auto_params_.wb_green * 255.));
-			arv_device_set_integer_feature_value(p_device_, "WhiteBalanceBlueRegister", (int)(auto_params_.wb_blue * 255.));
+		if (strcmp("The Imaging Source Europe GmbH", arv_camera_get_vendor_name(p_camera_, &error))==0) {
+			arv_device_set_integer_feature_value(p_device_, "WhiteBalanceRedRegister", (int)(auto_params_.wb_red * 255.), &error);
+			arv_device_set_integer_feature_value(p_device_, "WhiteBalanceGreenRegister", (int)(auto_params_.wb_green * 255.), &error);
+			arv_device_set_integer_feature_value(p_device_, "WhiteBalanceBlueRegister", (int)(auto_params_.wb_blue * 255.), &error);
 		}
 		else if (implemented_features_["BalanceRatio"] && implemented_features_["BalanceRatioSelector"]) {
 			if (auto_params_.wb_red != msg_ptr->wb_red)
 			{
-				arv_device_set_string_feature_value (p_device_, "BalanceRatioSelector", "Red");
-				arv_device_set_float_feature_value (p_device_, "BalanceRatio", msg_ptr->wb_red);
+				arv_device_set_string_feature_value (p_device_, "BalanceRatioSelector", "Red", &error);
+				arv_device_set_float_feature_value (p_device_, "BalanceRatio", msg_ptr->wb_red, &error);
 			}
 
 			if (auto_params_.wb_green != msg_ptr->wb_green)
 			{
-				arv_device_set_string_feature_value (p_device_, "BalanceRatioSelector", "Green");
-				arv_device_set_float_feature_value (p_device_, "BalanceRatio", msg_ptr->wb_green);
+				arv_device_set_string_feature_value (p_device_, "BalanceRatioSelector", "Green", &error);
+				arv_device_set_float_feature_value (p_device_, "BalanceRatio", msg_ptr->wb_green, &error);
 			}
 
 			if (auto_params_.wb_blue != msg_ptr->wb_blue)
 			{
-				arv_device_set_string_feature_value (p_device_, "BalanceRatioSelector", "Blue");
-				arv_device_set_float_feature_value (p_device_, "BalanceRatio", msg_ptr->wb_blue);
+				arv_device_set_string_feature_value (p_device_, "BalanceRatioSelector", "Blue", &error);
+				arv_device_set_float_feature_value (p_device_, "BalanceRatio", msg_ptr->wb_blue, &error);
 			}
 		}
 
@@ -435,54 +438,56 @@ void CameraAravisNodelet::syncAutoParameters() {
 		= std::numeric_limits<double>::quiet_NaN();
 
 	if (p_device_) {
+		GError *error = nullptr;
+
 		if (implemented_features_["ExposureTime"]) {
-			auto_params_.exposure_time = arv_device_get_float_feature_value(p_device_, "ExposureTime");
+			auto_params_.exposure_time = arv_device_get_float_feature_value(p_device_, "ExposureTime", &error);
 		}
 
 		if (implemented_features_["Gain"]) {
 			if (implemented_features_["GainSelector"]) {
-				arv_device_set_string_feature_value(p_device_, "GainSelector", "All");
+				arv_device_set_string_feature_value(p_device_, "GainSelector", "All", &error);
 			}
-			auto_params_.gain = arv_device_get_float_feature_value(p_device_, "Gain");
+			auto_params_.gain = arv_device_get_float_feature_value(p_device_, "Gain", &error);
 			if (implemented_features_["GainSelector"]) {
-				arv_device_set_string_feature_value(p_device_, "GainSelector", "Red");
-				auto_params_.gain_red = arv_device_get_float_feature_value(p_device_, "Gain");
-				arv_device_set_string_feature_value(p_device_, "GainSelector", "Green");
-				auto_params_.gain_green = arv_device_get_float_feature_value(p_device_, "Gain");
-				arv_device_set_string_feature_value(p_device_, "GainSelector", "Blue");
-				auto_params_.gain_blue = arv_device_get_float_feature_value(p_device_, "Gain");
+				arv_device_set_string_feature_value(p_device_, "GainSelector", "Red", &error);
+				auto_params_.gain_red = arv_device_get_float_feature_value(p_device_, "Gain", &error);
+				arv_device_set_string_feature_value(p_device_, "GainSelector", "Green", &error);
+				auto_params_.gain_green = arv_device_get_float_feature_value(p_device_, "Gain", &error);
+				arv_device_set_string_feature_value(p_device_, "GainSelector", "Blue", &error);
+				auto_params_.gain_blue = arv_device_get_float_feature_value(p_device_, "Gain", &error);
 			}
 		}
 
 		if (implemented_features_["BlackLevel"]) {
 			if (implemented_features_["BlackLevelSelector"]) {
-				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "All");
+				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "All", &error);
 			}
-			auto_params_.black_level = arv_device_get_float_feature_value(p_device_, "BlackLevel");
+			auto_params_.black_level = arv_device_get_float_feature_value(p_device_, "BlackLevel", &error);
 			if (implemented_features_["BlackLevelSelector"]) {
-				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "Red");
-				auto_params_.bl_red = arv_device_get_float_feature_value(p_device_, "BlackLevel");
-				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "Green");
-				auto_params_.bl_green = arv_device_get_float_feature_value(p_device_, "BlackLevel");
-				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "Blue");
-				auto_params_.bl_blue = arv_device_get_float_feature_value(p_device_, "BlackLevel");
+				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "Red", &error);
+				auto_params_.bl_red = arv_device_get_float_feature_value(p_device_, "BlackLevel", &error);
+				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "Green", &error);
+				auto_params_.bl_green = arv_device_get_float_feature_value(p_device_, "BlackLevel", &error);
+				arv_device_set_string_feature_value(p_device_, "BlackLevelSelector", "Blue", &error);
+				auto_params_.bl_blue = arv_device_get_float_feature_value(p_device_, "BlackLevel", &error);
 			}
 		}
 
 		// White balance as TIS is providing
-		if (strcmp("The Imaging Source Europe GmbH", arv_camera_get_vendor_name(p_camera_))==0) {
-			auto_params_.wb_red = arv_device_get_integer_feature_value(p_device_, "WhiteBalanceRedRegister") / 255.;
-			auto_params_.wb_green = arv_device_get_integer_feature_value(p_device_, "WhiteBalanceGreenRegister") / 255.;
-			auto_params_.wb_blue = arv_device_get_integer_feature_value(p_device_, "WhiteBalanceBlueRegister") / 255.;
+		if (strcmp("The Imaging Source Europe GmbH", arv_camera_get_vendor_name(p_camera_, &error))==0) {
+			auto_params_.wb_red = arv_device_get_integer_feature_value(p_device_, "WhiteBalanceRedRegister", &error) / 255.;
+			auto_params_.wb_green = arv_device_get_integer_feature_value(p_device_, "WhiteBalanceGreenRegister", &error) / 255.;
+			auto_params_.wb_blue = arv_device_get_integer_feature_value(p_device_, "WhiteBalanceBlueRegister", &error) / 255.;
 		}
 		// the standard way
 		else if (implemented_features_["BalanceRatio"] && implemented_features_["BalanceRatioSelector"]) {
-			arv_device_set_string_feature_value(p_device_, "BalanceRatioSelector", "Red");
-			auto_params_.wb_red = arv_device_get_float_feature_value(p_device_, "BalanceRatio");
-			arv_device_set_string_feature_value(p_device_, "BalanceRatioSelector", "Green");
-			auto_params_.wb_green = arv_device_get_float_feature_value(p_device_, "BalanceRatio");
-			arv_device_set_string_feature_value(p_device_, "BalanceRatioSelector", "Blue");
-			auto_params_.wb_blue = arv_device_get_float_feature_value(p_device_, "BalanceRatio");
+			arv_device_set_string_feature_value(p_device_, "BalanceRatioSelector", "Red", &error);
+			auto_params_.wb_red = arv_device_get_float_feature_value(p_device_, "BalanceRatio", &error);
+			arv_device_set_string_feature_value(p_device_, "BalanceRatioSelector", "Green", &error);
+			auto_params_.wb_green = arv_device_get_float_feature_value(p_device_, "BalanceRatio", &error);
+			arv_device_set_string_feature_value(p_device_, "BalanceRatioSelector", "Blue", &error);
+			auto_params_.wb_blue = arv_device_get_float_feature_value(p_device_, "BalanceRatio", &error);
 		}
 	}
 }
@@ -503,24 +508,26 @@ void CameraAravisNodelet::setAutoMaster(bool value) {
 void CameraAravisNodelet::setAutoSlave(bool value) {
 	if (value)
 	{
+		GError *error = nullptr;
+
 		// deactivate all auto functions
 		if (implemented_features_["ExposureAuto"]) {
-			arv_device_set_string_feature_value(p_device_, "ExposureAuto", "Off");
+			arv_device_set_string_feature_value(p_device_, "ExposureAuto", "Off", &error);
 		}
 		if (implemented_features_["GainAuto"]) {
-			arv_device_set_string_feature_value(p_device_, "GainAuto", "Off");
+			arv_device_set_string_feature_value(p_device_, "GainAuto", "Off", &error);
 		}
 		if (implemented_features_["GainAutoBalance"]) {
-			arv_device_set_string_feature_value(p_device_, "GainAutoBalance", "Off");
+			arv_device_set_string_feature_value(p_device_, "GainAutoBalance", "Off", &error);
 		}
 		if (implemented_features_["BlackLevelAuto"]) {
-			arv_device_set_string_feature_value(p_device_, "BlackLevelAuto", "Off");
+			arv_device_set_string_feature_value(p_device_, "BlackLevelAuto", "Off", &error);
 		}
 		if (implemented_features_["BlackLevelAutoBalance"]) {
-			arv_device_set_string_feature_value(p_device_, "BlackLevelAutoBalance", "Off");
+			arv_device_set_string_feature_value(p_device_, "BlackLevelAutoBalance", "Off", &error);
 		}
 		if (implemented_features_["BalanceWhiteAuto"]) {
-			arv_device_set_string_feature_value(p_device_, "BalanceWhiteAuto", "Off");
+			arv_device_set_string_feature_value(p_device_, "BalanceWhiteAuto", "Off", &error);
 		}
 		syncAutoParameters();
 		auto_sub_ = getNodeHandle().subscribe(ros::names::remap("camera_auto_info"), 1, &CameraAravisNodelet::cameraAutoInfoCallback, this);
@@ -628,12 +635,13 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 	}
 
 	// Set params into the camera.
+	GError *error = nullptr;
 	if (changed_exposure_time)
 	{
 		if (implemented_features_["ExposureTime"])
 		{
 			ROS_INFO ("Set ExposureTime = %f us", config.ExposureTime);
-			arv_camera_set_exposure_time(p_camera_, config.ExposureTime);
+			arv_camera_set_exposure_time(p_camera_, config.ExposureTime, &error);
 		}
 		else
 			ROS_INFO ("Camera does not support ExposureTime.");
@@ -644,7 +652,7 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["Gain"])
 		{
 			ROS_INFO ("Set gain = %f", config.Gain);
-			arv_camera_set_gain (p_camera_, config.Gain);
+			arv_camera_set_gain (p_camera_, config.Gain, &error);
 		}
 		else
 			ROS_INFO ("Camera does not support Gain or GainRaw.");
@@ -655,11 +663,11 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["ExposureAuto"] && implemented_features_["ExposureTime"])
 		{
 			ROS_INFO ("Set ExposureAuto = %s", config.ExposureAuto.c_str());
-			arv_device_set_string_feature_value (p_device_, "ExposureAuto", config.ExposureAuto.c_str());
+			arv_device_set_string_feature_value (p_device_, "ExposureAuto", config.ExposureAuto.c_str(), &error);
 			if (config.ExposureAuto.compare("Once")==0)
 			{
 				ros::Duration(2.0).sleep();
-				config.ExposureTime = arv_camera_get_exposure_time(p_camera_);
+				config.ExposureTime = arv_camera_get_exposure_time(p_camera_, &error);
 				ROS_INFO ("Get ExposureTime = %f us", config.ExposureTime);
 				config.ExposureAuto = "Off";
 			}
@@ -672,11 +680,11 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["GainAuto"] && implemented_features_["Gain"])
 		{
 			ROS_INFO ("Set GainAuto = %s", config.GainAuto.c_str());
-			arv_device_set_string_feature_value (p_device_, "GainAuto", config.GainAuto.c_str());
+			arv_device_set_string_feature_value (p_device_, "GainAuto", config.GainAuto.c_str(), &error);
 			if (config.GainAuto.compare("Once")==0)
 			{
 				ros::Duration(2.0).sleep();
-				config.Gain = arv_camera_get_gain (p_camera_);
+				config.Gain = arv_camera_get_gain (p_camera_, &error);
 				ROS_INFO ("Get Gain = %f", config.Gain);
 				config.GainAuto = "Off";
 			}
@@ -690,7 +698,7 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["AcquisitionFrameRate"])
 		{
 			ROS_INFO ("Set frame rate = %f Hz", config.AcquisitionFrameRate);
-			arv_camera_set_frame_rate(p_camera_, config.AcquisitionFrameRate);
+			arv_camera_set_frame_rate(p_camera_, config.AcquisitionFrameRate, &error);
 		}
 		else
 			ROS_INFO ("Camera does not support AcquisitionFrameRate.");
@@ -701,7 +709,7 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["TriggerMode"])
 		{
 			ROS_INFO ("Set TriggerMode = %s", config.TriggerMode.c_str());
-			arv_device_set_string_feature_value (p_device_, "TriggerMode", config.TriggerMode.c_str());
+			arv_device_set_string_feature_value (p_device_, "TriggerMode", config.TriggerMode.c_str(), &error);
 		}
 		else
 			ROS_INFO ("Camera does not support TriggerMode.");
@@ -718,7 +726,7 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["TriggerSource"])
 		{
 			ROS_INFO ("Set TriggerSource = %s", config.TriggerSource.c_str());
-			arv_device_set_string_feature_value (p_device_, "TriggerSource", config.TriggerSource.c_str());
+			arv_device_set_string_feature_value (p_device_, "TriggerSource", config.TriggerSource.c_str(), &error);
 		}
 		else {
 			ROS_INFO ("Camera does not support TriggerSource.");
@@ -745,9 +753,9 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["FocusPos"])
 		{
 			ROS_INFO ("Set FocusPos = %d", config.FocusPos);
-			arv_device_set_integer_feature_value(p_device_, "FocusPos", config.FocusPos);
+			arv_device_set_integer_feature_value(p_device_, "FocusPos", config.FocusPos, &error);
 			ros::Duration(1.0).sleep();
-			config.FocusPos = arv_device_get_integer_feature_value(p_device_, "FocusPos");
+			config.FocusPos = arv_device_get_integer_feature_value(p_device_, "FocusPos", &error);
 			ROS_INFO ("Get FocusPos = %d", config.FocusPos);
 		}
 		else
@@ -759,9 +767,9 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["GevSCPSPacketSize"])
 		{
 			ROS_INFO ("Set mtu = %d", config.mtu);
-			arv_device_set_integer_feature_value(p_device_, "GevSCPSPacketSize", config.mtu);
+			arv_device_set_integer_feature_value(p_device_, "GevSCPSPacketSize", config.mtu, &error);
 			ros::Duration(1.0).sleep();
-			config.mtu = arv_device_get_integer_feature_value(p_device_, "GevSCPSPacketSize");
+			config.mtu = arv_device_get_integer_feature_value(p_device_, "GevSCPSPacketSize", &error);
 			ROS_INFO ("Get mtu = %d", config.mtu);
 		}
 		else
@@ -773,12 +781,12 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 		if (implemented_features_["AcquisitionMode"])
 		{
 			ROS_INFO ("Set AcquisitionMode = %s", config.AcquisitionMode.c_str());
-			arv_device_set_string_feature_value (p_device_, "AcquisitionMode", config.AcquisitionMode.c_str());
+			arv_device_set_string_feature_value (p_device_, "AcquisitionMode", config.AcquisitionMode.c_str(), &error);
 
 			ROS_INFO("AcquisitionStop");
-			arv_device_execute_command (p_device_, "AcquisitionStop");
+			arv_device_execute_command (p_device_, "AcquisitionStop", &error);
 			ROS_INFO("AcquisitionStart");
-			arv_device_execute_command (p_device_, "AcquisitionStart");
+			arv_device_execute_command (p_device_, "AcquisitionStart", &error);
 		}
 		else
 			ROS_INFO ("Camera does not support AcquisitionMode.");
@@ -792,11 +800,13 @@ void CameraAravisNodelet::rosReconfigureCallback(Config &config, uint32_t level)
 void CameraAravisNodelet::rosConnectCallback()
 {
 	if (p_device_) {
+		GError *error = nullptr;
+
 		if (cam_pub_.getNumSubscribers() == 0) {
-			arv_device_execute_command (p_device_, "AcquisitionStop"); // don't waste CPU if nobody is listening!
+			arv_device_execute_command (p_device_, "AcquisitionStop", &error); // don't waste CPU if nobody is listening!
 		}
 		else {
-			arv_device_execute_command (p_device_, "AcquisitionStart");
+			arv_device_execute_command (p_device_, "AcquisitionStart", &error);
 		}
 	}
 }
@@ -878,7 +888,8 @@ void CameraAravisNodelet::softwareTriggerLoop()
 	while (ros::ok() && software_trigger_active_) {
 		next_time += std::chrono::milliseconds(size_t(std::round(1000.0 / config_.softwaretriggerrate)));
 		if (cam_pub_.getNumSubscribers()) {
-			arv_device_execute_command (p_device_, "TriggerSoftware");
+			GError *error = nullptr;
+			arv_device_execute_command (p_device_, "TriggerSoftware", &error);
 		}
 		if (next_time > std::chrono::system_clock::now()) {
 			std::this_thread::sleep_until(next_time);
@@ -920,7 +931,7 @@ void CameraAravisNodelet::discoverFeatures()
 
 	std::list<ArvDomNode*> todo;
 	todo.push_front((ArvDomNode*)arv_gc_get_node(gc, "Root"));
-	GError *error = NULL;
+	GError *error = nullptr;
 
 	while (!todo.empty()) {
 		// get next entry
@@ -982,7 +993,7 @@ void CameraAravisNodelet::writeCameraFeaturesFromRosparam()
 	XmlRpc::XmlRpcValue	 			 xml_rpc_params;
 	XmlRpc::XmlRpcValue::iterator	 iter;
 	ArvGcNode						*p_gc_node;
-	GError							*error = NULL;
+	GError							*error = nullptr;
 
 
 	getPrivateNodeHandle().getParam(this->getName(), xml_rpc_params);
@@ -1006,7 +1017,7 @@ void CameraAravisNodelet::writeCameraFeaturesFromRosparam()
 				case XmlRpc::XmlRpcValue::TypeBoolean://if ((iter->second.getType()==XmlRpc::XmlRpcValue::TypeBoolean))// && (typeValue==G_TYPE_INT64))
 				{
 					int			value = (bool)iter->second;
-					arv_device_set_integer_feature_value(p_device_, key.c_str(), value);
+					arv_device_set_integer_feature_value(p_device_, key.c_str(), value, &error);
 					ROS_INFO("Read parameter (bool) %s: %d", key.c_str(), value);
 				}
 				break;
@@ -1014,7 +1025,7 @@ void CameraAravisNodelet::writeCameraFeaturesFromRosparam()
 				case XmlRpc::XmlRpcValue::TypeInt: //if ((iter->second.getType()==XmlRpc::XmlRpcValue::TypeInt))// && (typeValue==G_TYPE_INT64))
 				{
 					int			value = (int)iter->second;
-					arv_device_set_integer_feature_value(p_device_, key.c_str(), value);
+					arv_device_set_integer_feature_value(p_device_, key.c_str(), value, &error);
 					ROS_INFO("Read parameter (int) %s: %d", key.c_str(), value);
 				}
 				break;
@@ -1022,7 +1033,7 @@ void CameraAravisNodelet::writeCameraFeaturesFromRosparam()
 				case XmlRpc::XmlRpcValue::TypeDouble: //if ((iter->second.getType()==XmlRpc::XmlRpcValue::TypeDouble))// && (typeValue==G_TYPE_DOUBLE))
 				{
 					double		value = (double)iter->second;
-					arv_device_set_float_feature_value(p_device_, key.c_str(), value);
+					arv_device_set_float_feature_value(p_device_, key.c_str(), value, &error);
 					ROS_INFO("Read parameter (float) %s: %f", key.c_str(), value);
 				}
 				break;
@@ -1030,7 +1041,7 @@ void CameraAravisNodelet::writeCameraFeaturesFromRosparam()
 				case XmlRpc::XmlRpcValue::TypeString: //if ((iter->second.getType()==XmlRpc::XmlRpcValue::TypeString))// && (typeValue==G_TYPE_STRING))
 				{
 					std::string	value = (std::string)iter->second;
-					arv_device_set_string_feature_value(p_device_, key.c_str(), value.c_str());
+					arv_device_set_string_feature_value(p_device_, key.c_str(), value.c_str(), &error);
 					ROS_INFO("Read parameter (string) %s: %s", key.c_str(), value.c_str());
 				}
 				break;
