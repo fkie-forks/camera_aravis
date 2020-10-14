@@ -475,6 +475,7 @@ CameraAravisNodelet::~CameraAravisNodelet()
 
 void CameraAravisNodelet::onInit()
 {
+  ros::NodeHandle nh = getNodeHandle();
   ros::NodeHandle pnh = getPrivateNodeHandle();
 
   // Print out some useful info.
@@ -673,7 +674,7 @@ void CameraAravisNodelet::onInit()
   // check if there is a different one given on parameters server
   pnh.param<std::string>("camera_info_url", calib_url, calib_url);
   // Start the camerainfo manager.
-  p_camera_info_manager_.reset(new camera_info_manager::CameraInfoManager(pnh, config_.frame_id, calib_url));
+  p_camera_info_manager_.reset(new camera_info_manager::CameraInfoManager(nh, config_.frame_id, calib_url));
 
   // update the reconfigure config
   reconfigure_server_->setConfigMin(config_min_);
@@ -767,7 +768,7 @@ void CameraAravisNodelet::onInit()
   { this->rosConnectCallback();};
 
   // Set up image_raw
-  image_transport::ImageTransport *p_transport = new image_transport::ImageTransport(pnh);
+  image_transport::ImageTransport *p_transport = new image_transport::ImageTransport(nh);
   cam_pub_ = p_transport->advertiseCamera(ros::names::remap("image_raw"), 1, image_cb, image_cb, info_cb, info_cb);
 
   // Connect signals with callbacks.
