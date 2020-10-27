@@ -227,7 +227,7 @@ protected:
 
   void publishTfLoop(double rate);
 
-  void discoverFeatures();
+  void discoverFeatures(bool print_features);
 
   // WriteCameraFeaturesFromRosparam()
   // Read ROS parameters from this node's namespace, and see if each parameter has a similarly named & typed feature in the camera.  Then set the

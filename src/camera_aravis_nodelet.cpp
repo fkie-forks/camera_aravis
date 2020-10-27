@@ -529,7 +529,8 @@ void CameraAravisNodelet::onInit()
   reconfigure_server_->getConfigMax(config_max_);
 
   // See which features exist in this camera device
-  discoverFeatures();
+  auto print_features = pnh.param<bool>("print_features", false);
+  discoverFeatures(print_features);
 
   // Get parameter bounds.
   arv_camera_get_exposure_time_bounds(p_camera_, &config_min_.ExposureTime, &config_max_.ExposureTime);
@@ -1416,7 +1417,7 @@ void CameraAravisNodelet::publishTfLoop(double rate)
   }
 }
 
-void CameraAravisNodelet::discoverFeatures()
+void CameraAravisNodelet::discoverFeatures(bool print_features)
 {
   implemented_features_.clear();
   if (!p_device_)
@@ -1460,7 +1461,7 @@ void CameraAravisNodelet::discoverFeatures()
       const std::string fname(arv_gc_feature_node_get_name(fnode));
       const bool usable = arv_gc_feature_node_is_available(fnode, &error)
           && arv_gc_feature_node_is_implemented(fnode, &error);
-      ROS_INFO_STREAM("Feature " << fname << " is " << usable);
+      ROS_INFO_STREAM_COND(print_features, "Feature " << fname << " is " << usable);
       implemented_features_.emplace(fname, usable);
       //}
     }
