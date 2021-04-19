@@ -475,6 +475,7 @@ CameraAravisNodelet::~CameraAravisNodelet()
 
 void CameraAravisNodelet::onInit()
 {
+  ros::NodeHandle nh = getNodeHandle();
   ros::NodeHandle pnh = getPrivateNodeHandle();
 
   // Print out some useful info.
@@ -515,7 +516,7 @@ void CameraAravisNodelet::onInit()
       p_camera_ = arv_camera_new(guid.c_str());
     }
     ros::Duration(1.0).sleep();
-    ros::spinOnce();
+    // ros::spinOnce();
   }
 
   p_device_ = arv_camera_get_device(p_camera_);
@@ -562,7 +563,7 @@ void CameraAravisNodelet::onInit()
     arv_camera_set_frame_rate(p_camera_, config_.AcquisitionFrameRate);
 
   // init default to full sensor resolution
-  arv_camera_set_region (p_camera_, 0, 0, sensor_.width, sensor_.height);
+  arv_camera_set_region (p_camera_, 0, 0, roi_.width_max, roi_.height_max);
 
   // Set up the triggering.
   if (implemented_features_["TriggerMode"] && implemented_features_["TriggerSelector"])
@@ -659,21 +660,21 @@ void CameraAravisNodelet::onInit()
   if( arv_gc_feature_node_is_implemented( ARV_GC_FEATURE_NODE(p_gc_node), &error) ) {
     GType device_serial_return_type = arv_gc_feature_node_get_value_type( ARV_GC_FEATURE_NODE(p_gc_node));
     // If the feature DeviceSerialNumber is not string, it indicates that the camera is using an older version of the genicam SFNC.
-    // Older camera models do not have a DeviceSerialNumber as string, but as integer and often set to 0. 
+    // Older camera models do not have a DeviceSerialNumber as string, but as integer and often set to 0.
     // In those cases use the outdated DeviceID (deprecated since genicam SFNC v2.0).
-    if (device_serial_return_type == G_TYPE_STRING) { 
+    if (device_serial_return_type == G_TYPE_STRING) {
       calib_url = arv_device_get_string_feature_value(p_device_, "DeviceSerialNumber");
       calib_url += ".yaml";
     } else if (device_serial_return_type == G_TYPE_INT64) {
       calib_url = arv_device_get_string_feature_value(p_device_, "DeviceID");
       calib_url += ".yaml";
     }
-  } 
-  
+  }
+
   // check if there is a different one given on parameters server
   pnh.param<std::string>("camera_info_url", calib_url, calib_url);
   // Start the camerainfo manager.
-  p_camera_info_manager_.reset(new camera_info_manager::CameraInfoManager(pnh, config_.frame_id, calib_url));
+  p_camera_info_manager_.reset(new camera_info_manager::CameraInfoManager(nh, config_.frame_id, calib_url));
 
   // update the reconfigure config
   reconfigure_server_->setConfigMin(config_min_);
@@ -767,7 +768,7 @@ void CameraAravisNodelet::onInit()
   { this->rosConnectCallback();};
 
   // Set up image_raw
-  image_transport::ImageTransport *p_transport = new image_transport::ImageTransport(pnh);
+  image_transport::ImageTransport *p_transport = new image_transport::ImageTransport(nh);
   cam_pub_ = p_transport->advertiseCamera(ros::names::remap("image_raw"), 1, image_cb, image_cb, info_cb, info_cb);
 
   // Connect signals with callbacks.
@@ -1338,8 +1339,17 @@ void CameraAravisNodelet::newBufferReadyCallback(ArvStream *p_stream, gpointer c
         p_can->camera_info_.reset(new sensor_msgs::CameraInfo);
       (*p_can->camera_info_) = p_can->p_camera_info_manager_->getCameraInfo();
       p_can->camera_info_->header = msg_ptr->header;
-      p_can->camera_info_->width = p_can->roi_.width;
-      p_can->camera_info_->height = p_can->roi_.height;
+      if (p_can->camera_info_->width == 0 || p_can->camera_info_->height == 0) {
+        ROS_WARN_STREAM_ONCE(
+            "The fields image_width and image_height seem not to be set in "
+            "the YAML specified by 'camera_info_url' parameter. Please set "
+            "them there, because actual image size and specified image size "
+            "can be different due to the region of interest (ROI) feature. In "
+            "the YAML the image size should be the one on which the camera was "
+            "calibrated. See CameraInfo.msg specification!");
+        p_can->camera_info_->width = p_can->roi_.width;
+        p_can->camera_info_->height = p_can->roi_.height;
+      }
 
       p_can->cam_pub_.publish(msg_ptr, p_can->camera_info_);
 
@@ -1458,6 +1468,7 @@ void CameraAravisNodelet::discoverFeatures()
       //if (!(ARV_IS_GC_CATEGORY(node) || ARV_IS_GC_ENUM_ENTRY(node) /*|| ARV_IS_GC_PORT(node)*/)) {
       ArvGcFeatureNode *fnode = ARV_GC_FEATURE_NODE(node);
       const std::string fname(arv_gc_feature_node_get_name(fnode));
+      error = NULL;  // reset error pointer to avoid warnings
       const bool usable = arv_gc_feature_node_is_available(fnode, &error)
           && arv_gc_feature_node_is_implemented(fnode, &error);
       ROS_INFO_STREAM("Feature " << fname << " is " << usable);
